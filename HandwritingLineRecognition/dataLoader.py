@@ -3,6 +3,8 @@ import random
 import numpy as np
 import cv2
 
+from Processor import processImage
+
 
 class DatasetSample:  # corresponds to one image; representation: (groundTruthText = actual text, filePath)
     def __init__(self, groundTruthText, filePath):
@@ -17,11 +19,12 @@ class Batch:
 
 
 class DataLoader:
-    def __init__(self, filesPath, batchSize, imageSize, dataSplitPercentage):
+    def __init__(self, filesPath, batchSize, imageSize, dataSplitPercentage, maxTextLength):
         self.batchSize = batchSize
         self.imageSize = imageSize
         self.samples = []
         self.currentIndex = 0
+        self.characters = set()
 
         # file from IAM containing on each line(as described in the beginning of it as comment lines):
         # (line id, result of word segmentation, graylevel, number of components, bounding box(x, y, w, h),
@@ -49,8 +52,10 @@ class DataLoader:
             groundTruthTextList = lineSplit[8].split('|')  # the actual text for each line as a list of words
             # print(groundTruthTextList)
 
-            # join the list of words with space to form a line and truncate the line if
-            groundTruthText = ' '.join(groundTruthTextList)
+            # join the list of words with space to form a line and truncate the line
+
+            groundTruthText = self.truncateLabel(' '.join(groundTruthTextList), maxTextLength)
+            self.characters = self.characters.union(set(list(groundTruthText)))
 
             # check if image is not empty
             if not os.path.getsize(fileName):
@@ -69,64 +74,43 @@ class DataLoader:
         self.groundTruthTrainLines = [x.groundTruthText for x in self.trainSamples]
         self.groundTruthTestLines = [x.groundTruthText for x in self.testSamples]
 
-        # chosen samples per epoch
-        self.numberOfSamplesTrainEpoch = 9500
+        self.trainSet()
 
-    def processImage(self, image, imageSize, enhance=False, dataAugmentation=False):
-        #  there are damaged files in IAM - use black image instead
-        if image is None:
-            image = np.zeros([imageSize[1], imageSize[0]])
-            print("Image None!")
+        self.characters = sorted(list(self.characters))
 
-        # increase dataset size by applying random stretches to the image
-        if dataAugmentation:
-            stretch = (random.random() - 0.5)
-            widthStretched = max(int(image.shape[1] * (1 + stretch)), 1)
-            image = cv2.resize(image, (widthStretched, image.shape[0]))
+    def truncateLabel(self, text, maxTextLen):
+        # If a too-long label is provided, ctc_loss returns an infinite gradient
+        # ctc_loss can't compute loss if it cannot find a mapping between text label and input
+        # labels. Repeat letters cost double because of the blank symbol needing to be inserted.
+        cost = 0
+        for i in range(len(text)):
+            if i != 0 and text[i] == text[i - 1]:
+                cost += 2
+            else:
+                cost += 1
+            if cost > maxTextLen:
+                return text[:i]
+        return text
 
-        # increase contrast and line width
-        if enhance:
-            pxmin = np.min(image)
-            pxmax = np.max(image)
-            imageContrast = (image - pxmin) / pxmax - pxmin * 255
-            kernel = np.ones((3, 3), np.uint8)
-            image = cv2.erode(imageContrast, kernel, iterations=1)
-
-        (width, height) = imageSize
-        (h, w) = image.shape
-        fx = w / width
-        fy = h / height
-        f = max(fx, fy)
-        newSize = (max(min(width, int(w / f)), 1),
-                   max(min(height, int(h / f)), 1))  # scale according to f (result at least 1 and at most wt or ht)
-        image = cv2.resize(image, newSize,
-                           interpolation=cv2.INTER_CUBIC)  # INTER_CUBIC interpolation best approximate the pixels image
-        target = np.ones([height, width]) * 255
-        target[0:newSize[1], 0:newSize[0]] = image
-
-        # transpose
-        image = cv2.transpose(target)
-        return image
-
-    def trainSetIteratorInit(self):
+    def trainSet(self):
         self.currentIndex = 0
         random.shuffle(self.trainSamples)  # shuffle the samples in each epoch
         self.samples = self.trainSamples
 
-    def testSetIteratorInit(self):
+    def validationSet(self):
         self.currentIndex = 0
         self.samples = self.testSamples
 
     def getIteratorInfo(self):
         return self.currentIndex // self.batchSize + 1, len(self.samples) // self.batchSize
 
-    def hasNextIterator(self):
+    def hasNext(self):
         return self.currentIndex + self.batchSize <= len(self.samples)
 
-    def getNextIterator(self):
+    def getNext(self):
         batchRange = range(self.currentIndex, self.currentIndex + self.batchSize)
         gtTexts = [self.samples[i].groundTruthText for i in batchRange]
-        images = [self.processImage(cv2.imread(self.samples[i].filePath, cv2.IMREAD_GRAYSCALE), self.imageSize)
+        images = [processImage(cv2.imread(self.samples[i].filePath, cv2.IMREAD_GRAYSCALE), self.imageSize)
                   for i in batchRange]
         self.currentIndex += self.batchSize
         return Batch(gtTexts, images)
@@ -138,7 +122,7 @@ class DataLoader:
             batchRange = range(currentIndex, min(len(samples), currentIndex + self.batchSize))
             # print(batchRange)
             groundTruthTexts = [self.samples[i].groundTruthText for i in batchRange]
-            images = [self.processImage(cv2.imread(self.samples[i].filePath, cv2.IMREAD_GRAYSCALE), self.imageSize) for
+            images = [processImage(cv2.imread(self.samples[i].filePath, cv2.IMREAD_GRAYSCALE), self.imageSize) for
                       i in batchRange]
             batches.append(Batch(groundTruthTexts, images))
             currentIndex += self.batchSize
