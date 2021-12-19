@@ -10,6 +10,7 @@ from dataLoader import DataLoader
 
 class FilePaths:
     fnTrain = 'data/'
+    fnAccuracy = 'model/accuracy.txt'
 
 
 def train(model, dataLoader):
@@ -37,7 +38,7 @@ def train(model, dataLoader):
             print('Batch:', iteratorInfo[0], '/', iteratorInfo[1], 'Loss:', lossValueForCurrentBatch)
 
         # Validate(test)
-        charErrorRate, addressAccuracy, wordErrorRate = validate(model, dataLoader)
+        charErrorRate, accuracy, wordErrorRate = validate(model, dataLoader)
 
         # If best validation accuracy so far, save model parameters
         if charErrorRate < bestCharErrorRate:
