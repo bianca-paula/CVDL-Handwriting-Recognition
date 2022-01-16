@@ -3,7 +3,7 @@ import sys
 
 
 class Model:
-    batchSize = 10
+    batchSize = 20
     imageSize = (800, 64)
     maxTextLen = 100
 
